@@ -6,7 +6,7 @@ from datetime import datetime
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (QApplication, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
                                QSpinBox, QDialog, QLineEdit, QMessageBox, QMainWindow, QWidget,
-                               QStackedWidget, QTextEdit, QListWidget)
+                               QStackedWidget, QTextEdit, QListWidget, QInputDialog)
 
 
 class TimeTrackerApp(QMainWindow):
@@ -128,6 +128,8 @@ class TimeTrackerApp(QMainWindow):
 
         self.edit_button = QPushButton("修改", self.page2)
         self.edit_button.clicked.connect(self.edit_task)
+        # 添加一个变量来跟踪上一次任务的结束时间
+        self.last_end_time = None
 
         # 布局
         layout.addWidget(self.timer_label)
@@ -173,15 +175,27 @@ class TimeTrackerApp(QMainWindow):
         hours, minutes = divmod(minutes, 60)
         self.timer_label.setText(f"剩余时间：{hours:02}:{minutes:02}:{seconds:02}")
 
+
+
     def show_reminder(self):
         """显示提醒并要求输入"""
         self.timer.stop()
         reminder_dialog = ReminderDialog(self)
         if reminder_dialog.exec():
             activity = reminder_dialog.get_input()
-            start_time = (datetime.now() - pd.Timedelta(minutes=self.interval_minutes)).strftime("%H:%M:%S")
+
+            # 如果是第一个任务，使用当前时间减去时间间隔作为开始时间
+            if self.last_end_time is None:
+                start_time = (datetime.now() - pd.Timedelta(minutes=self.interval_minutes)).strftime("%H:%M:%S")
+            else:
+                # 否则使用上一个任务的结束时间作为开始时间
+                start_time = self.last_end_time
+
             end_time = datetime.now().strftime("%H:%M:%S")
             time_period = f'{start_time} - {end_time}'
+
+            # 记录当前任务的结束时间，以便下一个任务使用
+            self.last_end_time = end_time
 
             # 检查记录是否已经存在，避免重复
             is_duplicate = any(record['时间段'] == time_period and record['完成的事项'] == activity for record in self.records)
@@ -280,7 +294,10 @@ class TimeTrackerApp(QMainWindow):
         selected_row = self.task_display.currentRow()
         if selected_row >= 0:
             current_text = self.records[selected_row]['完成的事项']
-            new_text, ok = QMessageBox.getText(self, "修改任务", "请输入新的任务描述:", QLineEdit.Normal, current_text)
+
+            # 使用 QInputDialog 而不是 QMessageBox
+            new_text, ok = QInputDialog.getText(self, "修改任务", "请输入新的任务描述:", QLineEdit.Normal, current_text)
+
             if ok and new_text:
                 self.records[selected_row]['完成的事项'] = new_text
                 self.task_display.item(selected_row).setText(f"{self.records[selected_row]['时间段']} {new_text}")
