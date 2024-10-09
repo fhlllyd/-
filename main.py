@@ -128,8 +128,8 @@ class TimeTrackerApp(QMainWindow):
 
         self.edit_button = QPushButton("修改", self.page2)
         self.edit_button.clicked.connect(self.edit_task)
-        # 添加一个变量来跟踪上一次任务的结束时间
-        self.last_end_time = None
+        # # 添加一个变量来跟踪上一次任务的结束时间
+        # self.last_end_time = None
 
         # 布局
         layout.addWidget(self.timer_label)
@@ -152,6 +152,10 @@ class TimeTrackerApp(QMainWindow):
         self.interval_minutes = self.time_input.value()
         self.rest_interval_minutes = self.rest_input.value()
         self.remaining_time = self.interval_minutes * 60  # 转换为秒
+
+        # 将 last_end_time 初始化为当前时间，作为开始时间
+        self.last_end_time = datetime.now().strftime("%H:%M:%S")
+
         self.update_timer_label()
 
         # 切换到页面2
@@ -175,8 +179,6 @@ class TimeTrackerApp(QMainWindow):
         hours, minutes = divmod(minutes, 60)
         self.timer_label.setText(f"剩余时间：{hours:02}:{minutes:02}:{seconds:02}")
 
-
-
     def show_reminder(self):
         """显示提醒并要求输入"""
         self.timer.stop()
@@ -184,17 +186,14 @@ class TimeTrackerApp(QMainWindow):
         if reminder_dialog.exec():
             activity = reminder_dialog.get_input()
 
-            # 如果是第一个任务，使用当前时间减去时间间隔作为开始时间
-            if self.last_end_time is None:
-                start_time = (datetime.now() - pd.Timedelta(minutes=self.interval_minutes)).strftime("%H:%M:%S")
-            else:
-                # 否则使用上一个任务的结束时间作为开始时间
-                start_time = self.last_end_time
+            # 使用 last_end_time 作为开始时间
+            start_time = self.last_end_time
 
+            # 当前时间为结束时间
             end_time = datetime.now().strftime("%H:%M:%S")
             time_period = f'{start_time} - {end_time}'
 
-            # 记录当前任务的结束时间，以便下一个任务使用
+            # 更新 last_end_time 为当前的结束时间
             self.last_end_time = end_time
 
             # 检查记录是否已经存在，避免重复
