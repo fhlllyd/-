@@ -1,9 +1,9 @@
-import sys
-import time
 import os
-import pandas as pd
+import sys
 from datetime import datetime
-from PySide6.QtCore import QTimer, Qt
+import pandas as pd
+from PySide6.QtCore import QTimer, QPoint
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QApplication, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
                                QSpinBox, QDialog, QLineEdit, QMessageBox, QMainWindow, QWidget,
                                QStackedWidget, QTextEdit, QListWidget, QInputDialog)
@@ -21,6 +21,7 @@ class TimeTrackerApp(QMainWindow):
         self.interval_minutes = 45
         self.rest_interval_minutes = 10
         self.remaining_time = 0
+        self.is_resting = False  # 初始化为工作状态
 
         # 设置文件夹路径
         self.folder_path = "任务表"
@@ -171,13 +172,54 @@ class TimeTrackerApp(QMainWindow):
             self.update_timer_label()
         else:
             self.timer.stop()
-            self.show_reminder()
+            if self.is_resting:
+                # 如果在休息状态，休息结束后弹出对话框让用户输入休息期间的事项
+                self.show_rest_reminder()
+            else:
+                # 如果在工作状态，工作结束后显示提醒并切换到休息倒计时
+                self.show_reminder()
 
     def update_timer_label(self):
         """更新倒计时显示"""
         minutes, seconds = divmod(self.remaining_time, 60)
         hours, minutes = divmod(minutes, 60)
         self.timer_label.setText(f"剩余时间：{hours:02}:{minutes:02}:{seconds:02}")
+
+    def show_rest_reminder(self):
+        """休息结束后显示提醒并要求输入休息期间的事项"""
+        self.timer.stop()
+        rest_reminder_dialog = ReminderDialog(self)
+        if rest_reminder_dialog.exec():
+            rest_activity = rest_reminder_dialog.get_input()
+
+            # 使用 last_end_time 作为休息开始时间
+            start_time = self.last_end_time
+
+            # 当前时间为结束时间
+            end_time = datetime.now().strftime("%H:%M:%S")
+            time_period = f'{start_time} - {end_time}'
+
+            # 更新 last_end_time 为当前的结束时间
+            self.last_end_time = end_time
+
+            # 检查记录是否已经存在，避免重复
+            is_duplicate = any(
+                record['时间段'] == time_period and record['完成的事项'] == rest_activity for record in self.records)
+
+            if not is_duplicate:
+                # 记录休息期间的事项
+                self.records.append({
+                    '时间段': time_period,
+                    '完成的事项': rest_activity
+                })
+
+                # 更新完成事项显示区
+                self.update_task_display(time_period, rest_activity)
+                # 即时保存
+                self.save_to_file()
+
+        # 休息结束后，重新启动工作倒计时
+        self.start_work_timer()
 
     def show_reminder(self):
         """显示提醒并要求输入"""
@@ -219,8 +261,15 @@ class TimeTrackerApp(QMainWindow):
         # 添加新的完成任务到显示区
         self.task_display.addItem(f"{time_period} {activity}")
 
+    def start_work_timer(self):
+        """开始工作倒计时"""
+        self.remaining_time = self.interval_minutes * 60
+        self.update_timer_label()
+        self.timer.start(1000)  # 启动工作倒计时
+
     def start_rest_timer(self):
         """开始休息倒计时"""
+        self.is_resting = True  # 进入休息状态
         self.remaining_time = self.rest_interval_minutes * 60
         self.update_timer_label()
         self.timer.start(1000)
@@ -284,15 +333,22 @@ class TimeTrackerApp(QMainWindow):
         """删除选择的任务"""
         selected_row = self.task_display.currentRow()
         if selected_row >= 0:
-            self.task_display.takeItem(selected_row)  # 删除列表项
-            del self.records[selected_row]  # 同时删除记录
-            self.save_to_file()
+            # 弹出确认对话框，确认是否删除
+            reply = QMessageBox.question(self, '确认删除', '你确定要删除该任务吗？',
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                # 从任务显示列表中删除选中的任务
+                self.task_display.takeItem(selected_row)
+                # 从记录中删除对应的任务
+                del self.records[selected_row]
+                # 保存到文件
+                self.save_to_file()
 
     def edit_task(self):
         """修改选择的任务"""
         selected_row = self.task_display.currentRow()
         if selected_row >= 0:
-            current_text = self.records[selected_row]['完成的事项']
+            current_text = str(self.records[selected_row]['完成的事项'])  # 将 current_text 转换为字符串
 
             # 使用 QInputDialog 而不是 QMessageBox
             new_text, ok = QInputDialog.getText(self, "修改任务", "请输入新的任务描述:", QLineEdit.Normal, current_text)
@@ -304,28 +360,18 @@ class TimeTrackerApp(QMainWindow):
 
     def save_to_file(self):
         """保存记录到文件，防止重复保存"""
+        # 如果文件夹不存在，则创建文件夹
         if not os.path.exists(self.folder_path):
             os.makedirs(self.folder_path)
 
+        # 构建文件的完整路径
         file_path = os.path.join(self.folder_path, self.filename)
 
-        # 读取现有文件的数据
-        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-            existing_df = pd.read_csv(file_path)
-        else:
-            existing_df = pd.DataFrame()
+        # 将当前的 records 列表转换为 DataFrame
+        df = pd.DataFrame(self.records)
 
-        # 创建当前记录的 DataFrame
-        new_df = pd.DataFrame(self.records)
-
-        # 如果现有文件不为空，进行数据合并，去除重复项
-        if not existing_df.empty:
-            combined_df = pd.concat([existing_df, new_df]).drop_duplicates()
-        else:
-            combined_df = new_df
-
-        # 保存合并后的数据（覆盖写入）
-        combined_df.to_csv(file_path, index=False)
+        # 将 DataFrame 保存到 CSV 文件中，覆盖现有文件
+        df.to_csv(file_path, index=False, encoding='utf-8')
         print(f"保存记录到 {file_path}")
 
 
@@ -333,6 +379,9 @@ class ReminderDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("任务提醒")
+
+        # 设置窗口始终置顶
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
         layout = QVBoxLayout()
         self.label = QLabel("请输入你在这个时间段内完成的事项:", self)
@@ -348,8 +397,43 @@ class ReminderDialog(QDialog):
 
         self.setLayout(layout)
 
+        # 初始化定时器，用于移动窗口
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.move_window)
+        self.timer.start(100)  # 每100毫秒移动一次窗口
+
+        self.move_direction = QPoint(50, 50)  # 初始化移动方向（每次移动的像素值）
+
     def get_input(self):
         return self.text_edit.toPlainText()
+
+    def move_window(self):
+        """让窗口在屏幕内来回移动"""
+        current_pos = self.pos()
+        new_x = current_pos.x() + self.move_direction.x()
+        new_y = current_pos.y() + self.move_direction.y()
+
+        # 获取屏幕的尺寸
+        screen_rect = QApplication.primaryScreen().availableGeometry()
+
+        # 检查窗口是否碰到屏幕边缘，碰到时改变方向
+        if new_x <= 0 or new_x + self.width() >= screen_rect.width():
+            self.move_direction.setX(-self.move_direction.x())
+        if new_y <= 0 or new_y + self.height() >= screen_rect.height():
+            self.move_direction.setY(-self.move_direction.y())
+
+        # 移动窗口到新的位置
+        self.move(new_x, new_y)
+
+    def enterEvent(self, event):
+        """当鼠标进入窗口时停止移动"""
+        self.timer.stop()  # 停止移动
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """当鼠标离开窗口时继续移动"""
+        self.timer.start(100)  # 重新开始移动
+        super().leaveEvent(event)
 
 
 class PauseReasonDialog(QDialog):
